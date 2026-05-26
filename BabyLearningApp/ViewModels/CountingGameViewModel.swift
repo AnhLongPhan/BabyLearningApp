@@ -30,21 +30,28 @@ final class CountingGameViewModel: GameRoundViewModel {
     private(set) var language: LearningLanguage
     private(set) var childName = ""
     private(set) var maxCount: Int
+    private(set) var hintLevel = 0
+    private(set) var isInputLocked = false
+    private var enabledThemes: [MathObjectTheme]
 
-    init(maxCount: Int = 10, languageCode: String = "vi-VN") {
+    init(maxCount: Int = 10, languageCode: String = "vi-VN", enabledThemeIDs: String? = nil) {
         self.maxCount = Self.validMaxCount(maxCount)
         self.language = LearningLanguage.from(languageCode)
+        self.enabledThemes = MathObjectTheme.themes(from: enabledThemeIDs ?? MathObjectTheme.defaultStorageValue)
         generateNewRound()
     }
 
     func generateNewRound() {
-        theme = MathObjectTheme.allCases.randomElement() ?? .apple
+        theme = enabledThemes.randomElement() ?? .apple
         objectEmoji = theme.emoji
         objectCount = Int.random(in: 1...maxCount)
         selectedAnswer = nil
         feedbackState = .idle
         feedbackText = ""
         responseSpeechText = ""
+        wrongAttemptCount = 0
+        hintLevel = 0
+        isInputLocked = false
         updateQuestionSpeechText()
 
         let wrongAnswers = Array(1...10)
@@ -59,22 +66,39 @@ final class CountingGameViewModel: GameRoundViewModel {
     }
 
     func selectAnswer(_ answer: Int) {
-        guard feedbackState != .correct else { return }
+        guard feedbackState != .correct, !isInputLocked else { return }
 
         selectedAnswer = answer
 
         if answer == objectCount {
-            let basePraise = language.numberPraiseSentences.randomElement() ?? language.correctFeedback
-            let praise = language.personalizedPraise(basePraise, childName: childName)
+            let praise = PersonalizationService.praise(childName: childName)
             feedbackState = .correct
             feedbackText = praise
             responseSpeechText = praise
+            wrongAttemptCount = 0
+            hintLevel = 0
+            isInputLocked = false
         } else {
-            feedbackState = .wrong
-            feedbackText = language.retryFeedback(childName: childName)
-            responseSpeechText = language.wrongSpeechText(childName: childName)
             wrongAttemptCount += 1
+            hintLevel = min(wrongAttemptCount, 3)
+            isInputLocked = true
+            feedbackState = .wrong
+            feedbackText = PersonalizationService.retryText(childName: childName, hintLevel: hintLevel)
+            responseSpeechText = PersonalizationService.retrySpeech(childName: childName, hintLevel: hintLevel)
         }
+    }
+
+    func unlockInput() {
+        guard feedbackState != .correct else { return }
+        isInputLocked = false
+    }
+
+    func shouldShowOption(_ option: CountingAnswerOption) -> Bool {
+        hintLevel < 3 || option.value == objectCount
+    }
+
+    func shouldHighlightOption(_ option: CountingAnswerOption) -> Bool {
+        hintLevel > 0 && option.value == objectCount
     }
 
     func updateMaxCount(_ value: Int) {
@@ -85,6 +109,13 @@ final class CountingGameViewModel: GameRoundViewModel {
         if objectCount > validValue {
             generateNewRound()
         }
+    }
+
+    func updateEnabledThemes(_ themeIDs: String) {
+        let themes = MathObjectTheme.themes(from: themeIDs)
+        guard themes.map(\.rawValue) != enabledThemes.map(\.rawValue) else { return }
+        enabledThemes = themes
+        generateNewRound()
     }
 
     func updateLanguage(_ languageCode: String) {
@@ -100,7 +131,7 @@ final class CountingGameViewModel: GameRoundViewModel {
     }
 
     private func updateQuestionSpeechText() {
-        questionSpeechText = language.countingQuestion(objectName: theme.speechName(for: language), childName: childName)
+        questionSpeechText = PersonalizationService.countingPrompt(objectName: theme.speechName(for: language), childName: childName)
     }
 
     private static func validMaxCount(_ value: Int) -> Int {

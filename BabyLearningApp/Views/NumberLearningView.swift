@@ -1,14 +1,17 @@
 import SwiftUI
 
 struct NumberLearningView: View {
+    let showsBackButton: Bool
+
     @AppStorage("maxNumberValue") private var maxNumberValue = 10
     @AppStorage("speechLanguageCode") private var speechLanguageCode = "vi-VN"
     @AppStorage("stickerRewardCount") private var stickerRewardCount = 0
-    @AppStorage("childName") private var childName = ""
+    @AppStorage("childName") private var childName = "Bé"
     @State private var viewModel = NumberGameViewModel()
     @State private var audioService = AudioService()
     @State private var floatingCards = false
     @State private var nextRoundTask: Task<Void, Never>?
+    @State private var showGiftReward = false
 
     private let cardStyles: [NumberCardStyle] = [
         NumberCardStyle(fruit: "🍎", color: .red, xRatio: 0.24, yRatio: 0.32, rotation: -8),
@@ -16,6 +19,10 @@ struct NumberLearningView: View {
         NumberCardStyle(fruit: "🍌", color: .yellow, xRatio: 0.50, yRatio: 0.72, rotation: -3)
     ]
     private let minimumCorrectFeedbackDuration: Duration = .seconds(3)
+
+    init(showsBackButton: Bool = true) {
+        self.showsBackButton = showsBackButton
+    }
 
     var body: some View {
         ZStack {
@@ -55,9 +62,11 @@ struct NumberLearningView: View {
             }
 
             RewardPopupView(text: viewModel.feedbackText, isVisible: viewModel.feedbackState == .correct)
+            GiftRewardPopupView(isVisible: showGiftReward, stickerCount: stickerRewardCount)
         }
         .navigationTitle("Học số")
         .navigationBarTitleDisplayMode(.inline)
+        .homeBackButton(showsBackButton)
         .onAppear {
             viewModel.updateChildName(childName)
             viewModel.updateLanguage(speechLanguageCode)
@@ -122,6 +131,7 @@ struct NumberLearningView: View {
                             x: geometry.size.width * style.xRatio,
                             y: geometry.size.height * style.yRatio
                         )
+                        .opacity(viewModel.shouldShowOption(number) ? 1 : 0)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 320)
@@ -148,20 +158,22 @@ struct NumberLearningView: View {
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 34, style: .continuous)
-                            .stroke(.white.opacity(0.82), lineWidth: 5)
+                            .stroke(viewModel.shouldHighlightOption(number) ? .yellow.opacity(0.95) : .white.opacity(0.82), lineWidth: viewModel.shouldHighlightOption(number) ? 8 : 5)
                     }
-                    .shadow(color: style.color.opacity(0.3), radius: 12, y: 8)
+                    .shadow(color: viewModel.shouldHighlightOption(number) ? .yellow.opacity(0.55) : style.color.opacity(0.3), radius: viewModel.shouldHighlightOption(number) ? 18 : 12, y: 8)
 
                 Text("\(number)")
                     .font(.system(size: 82, weight: .black))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color(red: 0.10, green: 0.13, blue: 0.36))
                     .minimumScaleFactor(0.55)
+                    .shadow(color: .white.opacity(0.75), radius: 1.5, x: 0, y: 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if viewModel.feedbackState == .correct && viewModel.selectedNumber == number {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 28, weight: .bold))
                         .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.28), radius: 2, y: 1)
                         .padding(10)
                 }
             }
@@ -174,7 +186,7 @@ struct NumberLearningView: View {
             .animation(.default, value: viewModel.wrongAttemptCount)
         }
         .buttonStyle(.plain)
-        .disabled(viewModel.feedbackState == .correct)
+        .disabled(viewModel.feedbackState == .correct || viewModel.isInputLocked || !viewModel.shouldShowOption(number))
         .accessibilityLabel("Số \(number)")
     }
 
@@ -188,10 +200,16 @@ struct NumberLearningView: View {
 
         guard viewModel.feedbackState == .correct else {
             audioService.speak(viewModel.speechText, language: viewModel.language.speechCode)
+            nextRoundTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                viewModel.unlockInput()
+            }
             return
         }
 
         stickerRewardCount += 1
+        showGiftIfNeeded()
         nextRoundTask = Task {
             async let minimumWait: Void = waitBeforeNextRound()
             await audioService.speakAndWait(viewModel.speechText, language: viewModel.language.speechCode)
@@ -208,6 +226,21 @@ struct NumberLearningView: View {
 
     private func waitBeforeNextRound() async {
         try? await Task.sleep(for: minimumCorrectFeedbackDuration)
+    }
+
+    private func showGiftIfNeeded() {
+        guard stickerRewardCount % 5 == 0 else { return }
+        withAnimation {
+            showGiftReward = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            await MainActor.run {
+                withAnimation {
+                    showGiftReward = false
+                }
+            }
+        }
     }
 }
 

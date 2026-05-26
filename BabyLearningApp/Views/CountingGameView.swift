@@ -4,11 +4,13 @@ struct CountingGameView: View {
     @AppStorage("maxNumberValue") private var maxNumberValue = 10
     @AppStorage("speechLanguageCode") private var speechLanguageCode = "vi-VN"
     @AppStorage("stickerRewardCount") private var stickerRewardCount = 0
-    @AppStorage("childName") private var childName = ""
+    @AppStorage("childName") private var childName = "Bé"
+    @AppStorage("enabledMathObjectThemes") private var enabledMathObjectThemes = MathObjectTheme.defaultStorageValue
     @State private var viewModel = CountingGameViewModel()
     @State private var audioService = AudioService()
     @State private var isFloating = false
     @State private var nextRoundTask: Task<Void, Never>?
+    @State private var showGiftReward = false
 
     private let bubbleColors: [Color] = [.teal, .orange, .pink]
     private let minimumCorrectFeedbackDuration: Duration = .seconds(3)
@@ -30,26 +32,27 @@ struct CountingGameView: View {
             )
 
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: 10) {
                     HStack {
                         MascotView(emoji: "🐰", message: countingMascotMessage)
                         Spacer()
                         StickerRewardView(count: stickerRewardCount)
                     }
 
-                    VStack(spacing: 12) {
+                    HStack(spacing: 12) {
                         Text("Có bao nhiêu?")
-                            .font(.system(size: 34, weight: .black))
+                            .font(.system(size: 28, weight: .black))
                             .foregroundStyle(.teal)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                        AudioReplayButton {
+                        AudioReplayButton(isCompact: true) {
                             replayQuestion()
                         }
-                        .scaleEffect(0.88)
                     }
-                    .padding(14)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity)
-                    .background(.white.opacity(0.84), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .background(.white.opacity(0.84), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
 
                     countingObjectField
 
@@ -65,13 +68,16 @@ struct CountingGameView: View {
             }
 
             RewardPopupView(text: viewModel.feedbackText, isVisible: viewModel.feedbackState == .correct)
+            GiftRewardPopupView(isVisible: showGiftReward, stickerCount: stickerRewardCount)
         }
         .navigationTitle("Đếm đồ vật")
         .navigationBarTitleDisplayMode(.inline)
+        .homeBackButton()
         .onAppear {
             viewModel.updateChildName(childName)
             viewModel.updateLanguage(speechLanguageCode)
             viewModel.updateMaxCount(maxNumberValue)
+            viewModel.updateEnabledThemes(enabledMathObjectThemes)
             isFloating = true
             audioService.speak(viewModel.questionSpeechText, language: viewModel.language.speechCode)
         }
@@ -83,6 +89,11 @@ struct CountingGameView: View {
         .onChange(of: speechLanguageCode) { _, newValue in
             nextRoundTask?.cancel()
             viewModel.updateLanguage(newValue)
+            audioService.speak(viewModel.questionSpeechText, language: viewModel.language.speechCode)
+        }
+        .onChange(of: enabledMathObjectThemes) { _, newValue in
+            nextRoundTask?.cancel()
+            viewModel.updateEnabledThemes(newValue)
             audioService.speak(viewModel.questionSpeechText, language: viewModel.language.speechCode)
         }
         .onChange(of: childName) { _, newValue in
@@ -106,15 +117,20 @@ struct CountingGameView: View {
                         xOffset: 0,
                         yOffset: 0,
                         isFloating: isFloating,
-                        delay: Double(index) * 0.06
+                        delay: Double(index) * 0.06,
+                        size: 62
                     )
                     .position(position)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 210)
+            .frame(maxWidth: .infinity, minHeight: 300)
             .background(.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .stroke(viewModel.hintLevel >= 2 ? .yellow.opacity(0.85) : .clear, lineWidth: 4)
+            }
         }
-        .frame(height: 220)
+        .frame(height: 310)
     }
 
     private var answerPlayArea: some View {
@@ -125,6 +141,7 @@ struct CountingGameView: View {
                         color: bubbleColors[index % bubbleColors.count],
                         isCorrect: isCorrect(option),
                         isWrong: isWrong(option),
+                        isHinted: viewModel.shouldHighlightOption(option),
                         wrongAttemptCount: viewModel.wrongAttemptCount,
                         isFloating: isFloating,
                         delay: Double(index) * 0.14
@@ -132,30 +149,43 @@ struct CountingGameView: View {
                         selectAnswer(option.value)
                     } content: {
                         Text("\(option.value)")
-                            .font(.system(size: 62, weight: .black))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 48, weight: .black))
+                            .foregroundStyle(Color(red: 0.10, green: 0.13, blue: 0.36))
                             .minimumScaleFactor(0.55)
+                            .shadow(color: .white.opacity(0.75), radius: 1.5, x: 0, y: 1)
                     }
                     .frame(width: answerBubbleSize(in: geometry.size), height: answerBubbleSize(in: geometry.size))
                     .position(
                         x: geometry.size.width * option.xRatio,
                         y: geometry.size.height * option.yRatio
                     )
-                    .disabled(viewModel.feedbackState == .correct)
+                    .opacity(viewModel.shouldShowOption(option) ? 1 : 0)
+                    .disabled(viewModel.feedbackState == .correct || viewModel.isInputLocked || !viewModel.shouldShowOption(option))
                 }
             }
         }
-        .frame(height: 220)
+        .frame(height: 155)
     }
 
     private func objectPosition(index: Int, count: Int, size: CGSize) -> CGPoint {
-        let columns = min(5, max(1, count))
+        let columns: Int
+        switch count {
+        case 1:
+            columns = 1
+        case 2...4:
+            columns = 2
+        case 5...6:
+            columns = 3
+        default:
+            columns = 4
+        }
         let row = index / columns
         let column = index % columns
-        let x = size.width * (CGFloat(column) + 0.75) / CGFloat(columns + 1)
-        let y = size.height * (CGFloat(row) + 0.78) / CGFloat(max(2, (count + columns - 1) / columns) + 1)
-        let wobbleX = CGFloat((index % 3) - 1) * 10
-        let wobbleY = CGFloat(((index + 1) % 3) - 1) * 8
+        let rows = max(1, Int(ceil(Double(count) / Double(columns))))
+        let x = size.width * (CGFloat(column) + 0.5) / CGFloat(columns)
+        let y = size.height * (CGFloat(row) + 0.5) / CGFloat(rows)
+        let wobbleX = CGFloat((index % 3) - 1) * 5
+        let wobbleY = CGFloat(((index + 1) % 3) - 1) * 5
         return CGPoint(x: x + wobbleX, y: y + wobbleY)
     }
 
@@ -164,7 +194,7 @@ struct CountingGameView: View {
     }
 
     private func answerBubbleSize(in size: CGSize) -> CGFloat {
-        min(max(size.width * 0.28, 96), 122)
+        min(max(size.width * 0.23, 82), 98)
     }
 
     private func isCorrect(_ option: CountingAnswerOption) -> Bool {
@@ -181,10 +211,16 @@ struct CountingGameView: View {
 
         guard viewModel.feedbackState == .correct else {
             audioService.speak(viewModel.responseSpeechText, language: viewModel.language.speechCode)
+            nextRoundTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                viewModel.unlockInput()
+            }
             return
         }
 
         stickerRewardCount += 1
+        showGiftIfNeeded()
         nextRoundTask = Task {
             async let minimumWait: Void = waitBeforeNextRound()
             await audioService.speakAndWait(viewModel.responseSpeechText, language: viewModel.language.speechCode)
@@ -201,6 +237,21 @@ struct CountingGameView: View {
 
     private func waitBeforeNextRound() async {
         try? await Task.sleep(for: minimumCorrectFeedbackDuration)
+    }
+
+    private func showGiftIfNeeded() {
+        guard stickerRewardCount % 5 == 0 else { return }
+        withAnimation {
+            showGiftReward = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            await MainActor.run {
+                withAnimation {
+                    showGiftReward = false
+                }
+            }
+        }
     }
 }
 

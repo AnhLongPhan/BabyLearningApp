@@ -1,19 +1,22 @@
 import SwiftUI
+import UIKit
 
 struct MascotView: View {
     let emoji: String
+    let assetName: String?
     let message: String?
     @State private var isFloating = false
 
-    init(emoji: String = "🐻", message: String? = nil) {
+    init(emoji: String = "🐻", assetName: String? = nil, message: String? = nil) {
         self.emoji = emoji
+        self.assetName = assetName
         self.message = message
     }
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(emoji)
-                .font(.system(size: 48))
+            mascotContent
+                .frame(width: 54, height: 54)
                 .offset(y: isFloating ? -4 : 4)
                 .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: isFloating)
 
@@ -30,6 +33,18 @@ struct MascotView: View {
         }
         .onAppear {
             isFloating = true
+        }
+    }
+
+    @ViewBuilder
+    private var mascotContent: some View {
+        if let assetName, UIImage(named: assetName) != nil {
+            Image(assetName)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Text(emoji)
+                .font(.system(size: 48))
         }
     }
 }

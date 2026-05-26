@@ -9,20 +9,8 @@ final class SpeechAudioProvider: NSObject, AudioProviding {
         synthesizer.delegate = self
     }
 
-    func speak(_ text: String, language: String = "vi-VN") {
-        stop()
-
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: language)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.85
-        utterance.pitchMultiplier = 1.08
-
-        synthesizer.speak(utterance)
-    }
-
-    func speakAndWait(_ text: String, language: String = "vi-VN") async {
+    func speak(_ text: String, language: String = "vi-VN") async {
         guard !text.isEmpty else { return }
-
         stop()
 
         await withCheckedContinuation { continuation in

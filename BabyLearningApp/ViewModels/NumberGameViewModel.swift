@@ -21,6 +21,8 @@ final class NumberGameViewModel {
     private(set) var feedbackText = ""
     private(set) var speechText = ""
     private(set) var wrongAttemptCount = 0
+    private(set) var hintLevel = 0
+    private(set) var isInputLocked = false
 
     init(maxNumberValue: Int = 10, languageCode: String = "vi-VN") {
         self.maxNumberValue = Self.validMaxNumber(maxNumberValue)
@@ -34,6 +36,9 @@ final class NumberGameViewModel {
         selectedNumber = nil
         feedbackState = .idle
         feedbackText = ""
+        wrongAttemptCount = 0
+        hintLevel = 0
+        isInputLocked = false
         updateQuestionSpeechText()
 
         let wrongNumbers = numberRange
@@ -64,22 +69,39 @@ final class NumberGameViewModel {
     }
 
     func selectNumber(_ number: Int) {
-        guard feedbackState != .correct else { return }
+        guard feedbackState != .correct, !isInputLocked else { return }
 
         selectedNumber = number
 
         if number == targetNumber {
-            let basePraise = language.numberPraiseSentences.randomElement() ?? language.correctFeedback
-            let praise = language.personalizedPraise(basePraise, childName: childName)
+            let praise = PersonalizationService.praise(childName: childName)
             feedbackState = .correct
             feedbackText = praise
             speechText = praise
+            wrongAttemptCount = 0
+            hintLevel = 0
+            isInputLocked = false
         } else {
-            feedbackState = .wrong
-            feedbackText = language.retryFeedback(childName: childName)
-            speechText = language.wrongSpeechText(childName: childName)
             wrongAttemptCount += 1
+            hintLevel = min(wrongAttemptCount, 3)
+            isInputLocked = true
+            feedbackState = .wrong
+            feedbackText = PersonalizationService.retryText(childName: childName, hintLevel: hintLevel)
+            speechText = PersonalizationService.retrySpeech(childName: childName, hintLevel: hintLevel)
         }
+    }
+
+    func unlockInput() {
+        guard feedbackState != .correct else { return }
+        isInputLocked = false
+    }
+
+    func shouldShowOption(_ number: Int) -> Bool {
+        hintLevel < 3 || number == targetNumber
+    }
+
+    func shouldHighlightOption(_ number: Int) -> Bool {
+        hintLevel > 0 && number == targetNumber
     }
 
     private static func validMaxNumber(_ value: Int) -> Int {
@@ -87,6 +109,6 @@ final class NumberGameViewModel {
     }
 
     private func updateQuestionSpeechText() {
-        speechText = language.findNumberPrompt(targetNumber, childName: childName)
+        speechText = PersonalizationService.numberPrompt(targetNumber, childName: childName)
     }
 }

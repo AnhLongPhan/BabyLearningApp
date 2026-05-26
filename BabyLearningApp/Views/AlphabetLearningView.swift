@@ -1,17 +1,26 @@
 import SwiftUI
 
 struct AlphabetLearningView: View {
+    let showsBackButton: Bool
+
     @AppStorage("enabledAlphabetCharacters") private var enabledAlphabetCharacters = "ABC"
     @AppStorage("speechLanguageCode") private var speechLanguageCode = "vi-VN"
     @AppStorage("stickerRewardCount") private var stickerRewardCount = 0
-    @AppStorage("childName") private var childName = ""
+    @AppStorage("childName") private var childName = "Bé"
     @State private var viewModel = AlphabetGameViewModel()
     @State private var audioService = AudioService()
     @State private var floatingBubbles = false
     @State private var nextRoundTask: Task<Void, Never>?
+    @State private var explorationAudioTask: Task<Void, Never>?
+    @State private var showGiftReward = false
+    @State private var isExplorationAudioPlaying = false
 
     private let bubbleColors: [Color] = [.orange, .teal, .pink, .purple, .mint]
     private let minimumCorrectFeedbackDuration: Duration = .seconds(3)
+
+    init(showsBackButton: Bool = true) {
+        self.showsBackButton = showsBackButton
+    }
 
     var body: some View {
         ZStack {
@@ -24,118 +33,117 @@ struct AlphabetLearningView: View {
                 symbols: ["sparkles", "star.fill", "heart.fill", "circle.fill"]
             )
 
-            ScrollView {
-                VStack(spacing: 16) {
-                    HStack {
-                        MascotView(emoji: "🐥", message: "Tìm chữ nhé")
-                        Spacer()
-                        StickerRewardView(count: stickerRewardCount)
-                    }
+            VStack(spacing: 12) {
+                HStack {
+                    MascotSpeechBubble(emoji: mascotEmoji, message: viewModel.mascotMessage)
+                    Spacer()
+                    StickerRewardView(count: stickerRewardCount)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
 
-                    LearningCardView(backgroundColor: .orange.opacity(0.18)) {
-                        Text("Đâu là chữ \(viewModel.targetLetter)?")
-                            .font(.system(size: 36, weight: .black))
-                            .multilineTextAlignment(.center)
-                            .minimumScaleFactor(0.75)
+                HStack(spacing: 12) {
+                    Text(viewModel.playPhase == .explore ? "Chạm từng chữ" : "Pop chữ \(viewModel.targetLetter)")
+                        .font(.system(size: 24, weight: .black))
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        AudioReplayButton {
-                            replayQuestion()
-                        }
-
-                        bubblePlayArea
-
-                        feedbackView
+                    AudioReplayButton(isCompact: true) {
+                        replayQuestion()
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, 16)
+
+                bubblePlayArea
+                    .padding(.horizontal, 12)
+
+                FeedbackOverlayView(
+                    text: viewModel.feedbackText,
+                    isCorrect: viewModel.feedbackState == .correct,
+                    isWrong: viewModel.feedbackState == .wrong
+                )
+                .frame(height: 56)
             }
 
             RewardPopupView(text: viewModel.feedbackText, isVisible: viewModel.feedbackState == .correct)
+            GiftRewardPopupView(isVisible: showGiftReward, stickerCount: stickerRewardCount)
         }
-        .navigationTitle("Chữ cái")
+        .navigationTitle("Letter Bubble Pop")
         .navigationBarTitleDisplayMode(.inline)
+        .homeBackButton(showsBackButton)
         .onAppear {
             viewModel.updateChildName(childName)
             viewModel.updateLanguage(speechLanguageCode)
             viewModel.updateEnabledLetters(enabledAlphabetCharacters)
             floatingBubbles = true
-            audioService.speak(viewModel.promptSpeechText, language: viewModel.language.speechCode)
         }
         .onChange(of: enabledAlphabetCharacters) { _, newValue in
             nextRoundTask?.cancel()
+            explorationAudioTask?.cancel()
+            isExplorationAudioPlaying = false
+            audioService.stop()
             viewModel.updateEnabledLetters(newValue)
-            audioService.speak(viewModel.promptSpeechText, language: viewModel.language.speechCode)
         }
         .onChange(of: speechLanguageCode) { _, newValue in
             nextRoundTask?.cancel()
+            explorationAudioTask?.cancel()
+            isExplorationAudioPlaying = false
+            audioService.stop()
             viewModel.updateLanguage(newValue)
-            audioService.speak(viewModel.promptSpeechText, language: viewModel.language.speechCode)
         }
         .onChange(of: childName) { _, newValue in
             viewModel.updateChildName(newValue)
         }
         .onDisappear {
             nextRoundTask?.cancel()
+            explorationAudioTask?.cancel()
             audioService.stop()
         }
     }
 
-    private var feedbackView: some View {
-        HStack(spacing: 10) {
-            if viewModel.feedbackState == .correct {
-                Image(systemName: "sparkles")
-                Image(systemName: "checkmark.circle.fill")
-            }
-
-            Text(viewModel.feedbackText)
-                .font(.system(size: 28, weight: .bold))
-                .minimumScaleFactor(0.7)
-        }
-        .foregroundStyle(feedbackColor)
-        .frame(height: 42)
-    }
-
-    private var feedbackColor: Color {
-        switch viewModel.feedbackState {
-        case .idle:
-            return .clear
-        case .correct:
-            return .green
-        case .wrong:
-            return .orange
-        }
+    private var mascotEmoji: String {
+        ["🐰", "🐻", "🦁"].randomElement() ?? "🐰"
     }
 
     private var bubblePlayArea: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ForEach(Array(viewModel.options.enumerated()), id: \.element.id) { index, option in
+        FloatingBubbleContainer(height: 470) { size in
+            ForEach(Array(viewModel.options.enumerated()), id: \.element.id) { index, option in
+                ZStack {
                     LetterBubbleView(
                         letter: option.letter,
                         color: bubbleColors[index % bubbleColors.count],
                         isCorrect: isCorrect(option),
                         isWrong: isWrong(option),
+                        isHinted: viewModel.shouldHighlightOption(option),
+                        isExploring: viewModel.exploredLetter == option.letter,
+                        isPopped: isCorrect(option),
                         wrongAttemptCount: viewModel.wrongAttemptCount,
                         isFloating: floatingBubbles,
-                        animationDelay: Double(index) * 0.14
+                        animationDelay: Double(index) * 0.17
                     ) {
                         selectLetter(option.letter)
                     }
-                    .frame(width: bubbleSize(in: geometry.size), height: bubbleSize(in: geometry.size))
+                    .frame(width: bubbleSize(in: size, index: index), height: bubbleSize(in: size, index: index))
                     .position(
-                        x: geometry.size.width * option.xRatio,
-                        y: geometry.size.height * option.yRatio
+                        x: size.width * option.xRatio,
+                        y: size.height * option.yRatio
                     )
-                    .disabled(viewModel.feedbackState == .correct)
+                    .opacity(viewModel.shouldShowOption(option) ? 1 : 0)
+                    .disabled(viewModel.feedbackState == .correct || viewModel.isInputLocked || isExplorationAudioPlaying || !viewModel.shouldShowOption(option))
+
+                    RewardEffectView(isActive: isCorrect(option))
+                        .position(
+                            x: size.width * option.xRatio,
+                            y: size.height * option.yRatio
+                        )
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 320)
         }
-        .frame(height: 330)
     }
 
-    private func bubbleSize(in size: CGSize) -> CGFloat {
-        min(max(size.width * 0.30, 108), 142)
+    private func bubbleSize(in size: CGSize, index: Int) -> CGFloat {
+        let base = min(max(size.width * 0.34, 128), 168)
+        return base + CGFloat(index % 2) * 12
     }
 
     private func isCorrect(_ option: LetterBubbleOption) -> Bool {
@@ -148,11 +156,18 @@ struct AlphabetLearningView: View {
 
     private func selectLetter(_ letter: String) {
         nextRoundTask?.cancel()
+
+        if viewModel.playPhase == .explore {
+            playExplorationLetter(letter)
+            return
+        }
+
         viewModel.selectLetter(letter)
 
         switch viewModel.feedbackState {
         case .correct:
             stickerRewardCount += 1
+            showGiftIfNeeded()
             nextRoundTask = Task {
                 async let minimumWait: Void = waitBeforeNextRound()
                 await audioService.speakAndWait(viewModel.praiseSpeechText, language: viewModel.language.speechCode)
@@ -161,21 +176,65 @@ struct AlphabetLearningView: View {
                 await minimumWait
                 guard !Task.isCancelled else { return }
                 viewModel.generateNewRound()
-                audioService.speak(viewModel.promptSpeechText, language: viewModel.language.speechCode)
+                isExplorationAudioPlaying = false
             }
         case .wrong:
             audioService.speak(viewModel.wrongSpeechText, language: viewModel.language.speechCode)
+            nextRoundTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                viewModel.unlockInput()
+            }
         case .idle:
             break
         }
     }
 
     private func replayQuestion() {
+        explorationAudioTask?.cancel()
+        isExplorationAudioPlaying = false
+        if viewModel.playPhase == .explore {
+            viewModel.startChallenge()
+        }
         audioService.speak(viewModel.promptSpeechText, language: viewModel.language.speechCode)
+    }
+
+    private func playExplorationLetter(_ letter: String) {
+        explorationAudioTask?.cancel()
+        viewModel.exploreLetter(letter)
+        isExplorationAudioPlaying = true
+
+        explorationAudioTask = Task {
+            await audioService.speakAndWait(viewModel.letterSoundText, language: viewModel.language.speechCode)
+            guard !Task.isCancelled else { return }
+
+            if viewModel.hasExploredAllOptions {
+                viewModel.startChallenge()
+                await audioService.speakAndWait(viewModel.promptSpeechText, language: viewModel.language.speechCode)
+            }
+
+            guard !Task.isCancelled else { return }
+            isExplorationAudioPlaying = false
+        }
     }
 
     private func waitBeforeNextRound() async {
         try? await Task.sleep(for: minimumCorrectFeedbackDuration)
+    }
+
+    private func showGiftIfNeeded() {
+        guard stickerRewardCount % 5 == 0 else { return }
+        withAnimation {
+            showGiftReward = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            await MainActor.run {
+                withAnimation {
+                    showGiftReward = false
+                }
+            }
+        }
     }
 }
 

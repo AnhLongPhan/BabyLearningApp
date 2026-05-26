@@ -24,6 +24,9 @@ struct RewardPopupView: View {
             .background(.pink.gradient, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
             .shadow(color: .pink.opacity(0.28), radius: 18, y: 10)
             .transition(.scale.combined(with: .opacity))
+            .overlay {
+                ConfettiBurstView(isActive: isVisible)
+            }
         }
     }
 }

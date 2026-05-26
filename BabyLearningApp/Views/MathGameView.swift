@@ -1,18 +1,26 @@
 import SwiftUI
 
 struct MathGameView: View {
+    let showsBackButton: Bool
+
     @AppStorage("totalCorrectMathAnswers") private var savedTotalCorrectAnswers = 0
     @AppStorage("maxMathSum") private var maxMathSum = 5
     @AppStorage("speechLanguageCode") private var speechLanguageCode = "vi-VN"
     @AppStorage("stickerRewardCount") private var stickerRewardCount = 0
-    @AppStorage("childName") private var childName = ""
+    @AppStorage("childName") private var childName = "Bé"
+    @AppStorage("enabledMathObjectThemes") private var enabledMathObjectThemes = MathObjectTheme.defaultStorageValue
     @State private var viewModel = MathGameViewModel()
     @State private var audioService = AudioService()
     @State private var isFloating = false
     @State private var nextRoundTask: Task<Void, Never>?
+    @State private var showGiftReward = false
 
     private let answerColors: [Color] = [.pink, .teal, .orange]
     private let minimumCorrectFeedbackDuration: Duration = .seconds(3)
+
+    init(showsBackButton: Bool = true) {
+        self.showsBackButton = showsBackButton
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -30,7 +38,7 @@ struct MathGameView: View {
             decorativeBackground
 
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: 10) {
                     HStack {
                         MascotView(emoji: "🐼", message: "Cộng vui nào")
                         Spacer()
@@ -44,7 +52,8 @@ struct MathGameView: View {
                         rightCount: viewModel.rightNumber,
                         emoji: viewModel.objectEmoji,
                         roundID: viewModel.roundID,
-                        isFloating: isFloating
+                        isFloating: isFloating,
+                        isHighlighted: viewModel.hintLevel >= 2
                     )
                     .id(viewModel.roundID)
                     .padding(.horizontal, 2)
@@ -62,7 +71,7 @@ struct MathGameView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(16)
-                .padding(.bottom, 84)
+                .padding(.bottom, 56)
             }
 
             HandHintView(answer: viewModel.correctAnswer)
@@ -71,13 +80,16 @@ struct MathGameView: View {
                 .opacity(0.88)
 
             RewardPopupView(text: viewModel.feedbackText, isVisible: viewModel.feedbackState == .correct)
+            GiftRewardPopupView(isVisible: showGiftReward, stickerCount: stickerRewardCount)
         }
         .navigationTitle("Cộng đơn giản")
         .navigationBarTitleDisplayMode(.inline)
+        .homeBackButton(showsBackButton)
         .onAppear {
             viewModel.updateChildName(childName)
             viewModel.updateLanguage(speechLanguageCode)
             viewModel.updateMaxMathSum(maxMathSum)
+            viewModel.updateEnabledThemes(enabledMathObjectThemes)
             viewModel.updateTotalCorrectAnswers(savedTotalCorrectAnswers)
             isFloating = true
             audioService.speak(viewModel.questionSpeechText, language: viewModel.language.speechCode)
@@ -92,6 +104,11 @@ struct MathGameView: View {
             viewModel.updateLanguage(newValue)
             audioService.speak(viewModel.questionSpeechText, language: viewModel.language.speechCode)
         }
+        .onChange(of: enabledMathObjectThemes) { _, newValue in
+            nextRoundTask?.cancel()
+            viewModel.updateEnabledThemes(newValue)
+            audioService.speak(viewModel.questionSpeechText, language: viewModel.language.speechCode)
+        }
         .onChange(of: childName) { _, newValue in
             viewModel.updateChildName(newValue)
         }
@@ -102,20 +119,19 @@ struct MathGameView: View {
     }
 
     private var equationCloud: some View {
-        VStack(spacing: 12) {
+        HStack(spacing: 12) {
             Text("\(viewModel.leftNumber) + \(viewModel.rightNumber) = ?")
-                .font(.system(size: 48, weight: .black))
+                .font(.system(size: 40, weight: .black))
                 .foregroundStyle(.pink)
                 .minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            AudioReplayButton {
+            AudioReplayButton(isCompact: true) {
                 replayQuestion()
             }
-            .scaleEffect(0.82)
         }
-        .padding(.horizontal, 26)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
         .background {
             CloudCardShape()
                 .fill(.white.opacity(0.88))
@@ -132,6 +148,7 @@ struct MathGameView: View {
                         color: answerColors[index % answerColors.count],
                         isCorrect: isCorrect(option),
                         isWrong: isWrong(option),
+                        isHinted: viewModel.shouldHighlightOption(option),
                         wrongAttemptCount: viewModel.wrongAttemptCount,
                         isFloating: isFloating,
                         delay: Double(index) * 0.14
@@ -143,12 +160,13 @@ struct MathGameView: View {
                         x: geometry.size.width * option.xRatio,
                         y: geometry.size.height * option.yRatio
                     )
-                    .disabled(viewModel.feedbackState == .correct)
+                    .opacity(viewModel.shouldShowOption(option) ? 1 : 0)
+                    .disabled(viewModel.feedbackState == .correct || viewModel.isInputLocked || !viewModel.shouldShowOption(option))
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 220)
+            .frame(maxWidth: .infinity, minHeight: 125)
         }
-        .frame(height: 230)
+        .frame(height: 135)
     }
 
     private var decorativeBackground: some View {
@@ -176,7 +194,7 @@ struct MathGameView: View {
     }
 
     private func answerBubbleSize(in size: CGSize) -> CGFloat {
-        min(max(size.width * 0.26, 96), 124)
+        min(max(size.width * 0.20, 76), 92)
     }
 
     private func isCorrect(_ option: MathAnswerOption) -> Bool {
@@ -195,6 +213,7 @@ struct MathGameView: View {
         case .correct:
             savedTotalCorrectAnswers = viewModel.totalCorrectAnswers
             stickerRewardCount += 1
+            showGiftIfNeeded()
             nextRoundTask = Task {
                 async let minimumWait: Void = waitBeforeNextRound()
                 await audioService.speakAndWait(viewModel.responseSpeechText, language: viewModel.language.speechCode)
@@ -205,6 +224,11 @@ struct MathGameView: View {
             }
         case .wrong:
             audioService.speak(viewModel.responseSpeechText, language: viewModel.language.speechCode)
+            nextRoundTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                viewModel.unlockInput()
+            }
         case .idle:
             break
         }
@@ -216,6 +240,21 @@ struct MathGameView: View {
 
     private func waitBeforeNextRound() async {
         try? await Task.sleep(for: minimumCorrectFeedbackDuration)
+    }
+
+    private func showGiftIfNeeded() {
+        guard stickerRewardCount % 5 == 0 else { return }
+        withAnimation {
+            showGiftReward = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            await MainActor.run {
+                withAnimation {
+                    showGiftReward = false
+                }
+            }
+        }
     }
 }
 

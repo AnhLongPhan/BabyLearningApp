@@ -34,16 +34,20 @@ final class MathGameViewModel {
     private(set) var language: LearningLanguage
     private(set) var childName = ""
     private(set) var roundID = UUID()
+    private(set) var hintLevel = 0
+    private(set) var isInputLocked = false
+    private var enabledThemes: [MathObjectTheme]
 
-    init(maxMathSum: Int = 5, totalCorrectAnswers: Int = 0, languageCode: String = "vi-VN") {
+    init(maxMathSum: Int = 5, totalCorrectAnswers: Int = 0, languageCode: String = "vi-VN", enabledThemeIDs: String? = nil) {
         self.maxMathSum = Self.validMaxMathSum(maxMathSum)
         self.totalCorrectAnswers = totalCorrectAnswers
         self.language = LearningLanguage.from(languageCode)
+        self.enabledThemes = MathObjectTheme.themes(from: enabledThemeIDs ?? MathObjectTheme.defaultStorageValue)
         generateNewRound()
     }
 
     func generateNewRound() {
-        selectedTheme = MathObjectTheme.allCases.randomElement() ?? .apple
+        selectedTheme = enabledThemes.randomElement() ?? .apple
         objectEmoji = selectedTheme.emoji
         correctAnswer = Int.random(in: 2...maxMathSum)
         leftNumber = Int.random(in: 1..<correctAnswer)
@@ -52,7 +56,10 @@ final class MathGameViewModel {
         feedbackState = .idle
         feedbackText = ""
         responseSpeechText = ""
-        questionSpeechText = language.mathQuestion(
+        wrongAttemptCount = 0
+        hintLevel = 0
+        isInputLocked = false
+        questionSpeechText = PersonalizationService.mathPrompt(
             leftNumber: leftNumber,
             rightNumber: rightNumber,
             objectName: selectedTheme.speechName(for: language),
@@ -73,23 +80,40 @@ final class MathGameViewModel {
     }
 
     func selectAnswer(_ answer: Int) {
-        guard feedbackState != .correct else { return }
+        guard feedbackState != .correct, !isInputLocked else { return }
 
         selectedAnswer = answer
 
         if answer == correctAnswer {
-            let basePraise = language.mathPraiseSentences.randomElement() ?? language.correctFeedback
-            let praise = language.personalizedPraise(basePraise, childName: childName)
+            let praise = PersonalizationService.praise(childName: childName)
             feedbackState = .correct
             feedbackText = praise
             responseSpeechText = praise
             totalCorrectAnswers += 1
+            wrongAttemptCount = 0
+            hintLevel = 0
+            isInputLocked = false
         } else {
-            feedbackState = .wrong
-            feedbackText = language.retryFeedback(childName: childName)
-            responseSpeechText = language.wrongSpeechText(childName: childName)
             wrongAttemptCount += 1
+            hintLevel = min(wrongAttemptCount, 3)
+            isInputLocked = true
+            feedbackState = .wrong
+            feedbackText = PersonalizationService.retryText(childName: childName, hintLevel: hintLevel)
+            responseSpeechText = PersonalizationService.retrySpeech(childName: childName, hintLevel: hintLevel)
         }
+    }
+
+    func unlockInput() {
+        guard feedbackState != .correct else { return }
+        isInputLocked = false
+    }
+
+    func shouldShowOption(_ option: MathAnswerOption) -> Bool {
+        hintLevel < 3 || option.value == correctAnswer
+    }
+
+    func shouldHighlightOption(_ option: MathAnswerOption) -> Bool {
+        hintLevel > 0 && option.value == correctAnswer
     }
 
     func updateMaxMathSum(_ value: Int) {
@@ -101,6 +125,13 @@ final class MathGameViewModel {
 
     func updateTotalCorrectAnswers(_ total: Int) {
         totalCorrectAnswers = max(total, 0)
+    }
+
+    func updateEnabledThemes(_ themeIDs: String) {
+        let themes = MathObjectTheme.themes(from: themeIDs)
+        guard themes.map(\.rawValue) != enabledThemes.map(\.rawValue) else { return }
+        enabledThemes = themes
+        generateNewRound()
     }
 
     func updateLanguage(_ languageCode: String) {
@@ -116,7 +147,7 @@ final class MathGameViewModel {
     }
 
     private func updateQuestionSpeechText() {
-        questionSpeechText = language.mathQuestion(
+        questionSpeechText = PersonalizationService.mathPrompt(
             leftNumber: leftNumber,
             rightNumber: rightNumber,
             objectName: selectedTheme.speechName(for: language),

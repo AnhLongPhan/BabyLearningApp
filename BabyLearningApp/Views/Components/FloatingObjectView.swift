@@ -7,12 +7,13 @@ struct FloatingObjectView: View {
     let yOffset: CGFloat
     let isFloating: Bool
     let delay: Double
+    var size: CGFloat = 58
     @State private var floatsUp = false
 
     var body: some View {
         Text(emoji)
-            .font(.system(size: 36))
-            .frame(width: 46, height: 46)
+            .font(.system(size: size * 0.78))
+            .frame(width: size, height: size)
             .background(.white.opacity(0.66), in: Circle())
             .rotationEffect(.degrees(rotation))
             .offset(x: xOffset, y: yOffset + (floatsUp ? -5 : 5))

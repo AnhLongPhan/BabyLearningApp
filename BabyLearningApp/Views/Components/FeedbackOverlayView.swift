@@ -22,6 +22,9 @@ struct FeedbackOverlayView: View {
         .background((isCorrect || isWrong) ? Color.white.opacity(0.78) : Color.clear, in: Capsule())
         .scaleEffect(isCorrect ? 1.08 : 1.0)
         .animation(.spring(response: 0.28, dampingFraction: 0.55), value: isCorrect)
+        .overlay {
+            ConfettiBurstView(isActive: isCorrect)
+        }
     }
 }
 

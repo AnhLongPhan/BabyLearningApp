@@ -2,34 +2,29 @@ import Foundation
 
 final class AudioService {
     private let provider: AudioProviding
+    private var speechTask: Task<Void, Never>?
 
-    init(provider: AudioProviding = SpeechAudioProvider()) {
+    init(provider: AudioProviding = CachedAudioService()) {
         self.provider = provider
     }
 
     func speak(_ text: String, language: String = "vi-VN") {
-        provider.speak(text, language: language)
-    }
-
-    func speakAndWait(_ text: String, language: String = "vi-VN") async {
-        await provider.speakAndWait(text, language: language)
-    }
-
-    func stop() {
+        speechTask?.cancel()
         provider.stop()
-    }
-}
-
-final class FileAudioProvider: AudioProviding {
-    func speak(_ text: String, language: String = "vi-VN") {
-        // Placeholder for future mp3 playback implementation.
+        speechTask = Task {
+            await provider.speak(text, language: language)
+        }
     }
 
     func speakAndWait(_ text: String, language: String = "vi-VN") async {
-        speak(text, language: language)
+        speechTask?.cancel()
+        provider.stop()
+        await provider.speak(text, language: language)
     }
 
     func stop() {
-        // Placeholder for future mp3 playback implementation.
+        speechTask?.cancel()
+        speechTask = nil
+        provider.stop()
     }
 }
